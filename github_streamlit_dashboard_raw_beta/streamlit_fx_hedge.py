@@ -31,7 +31,7 @@ PAIR_LIST = [
 BASE_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST]))
 FX_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST] + [hedge for _, hedge in PAIR_LIST]))
 DEFAULT_INTERVAL = "1h"
-DEFAULT_BARS = 252
+DEFAULT_BARS = 720
 DEFAULT_BUFFER_BARS = 72
 DEFAULT_MIN_SEGMENT_BARS = 24
 DEFAULT_KALMAN_PROCESS_VAR = 1e-5
@@ -43,6 +43,14 @@ CONTRACT_SIZES = {
     "XAUUSD": 1.0,
     "XAGUSD": 50.0,
 }
+VOL_TARGET_WINDOWS = {
+    "15m": 96,
+    "30m": 48,
+    "60m": 24,
+    "1h": 24,
+}
+VOL_TARGET_MIN_SCALE = 0.5
+VOL_TARGET_MAX_SCALE = 1.5
 
 PLOTLY_TEMPLATE = go.layout.Template(
     layout=go.Layout(
@@ -619,6 +627,32 @@ def latest_value(series: pd.Series) -> float:
     return float(series.iloc[-1])
 
 
+def vol_window_from_interval(interval: str) -> int:
+    if not interval:
+        return VOL_TARGET_WINDOWS["1h"]
+    return int(VOL_TARGET_WINDOWS.get(interval.strip().lower(), VOL_TARGET_WINDOWS["1h"]))
+
+
+def vol_target_scale(resid: pd.Series, interval: str) -> Tuple[float, float, float]:
+    resid = resid.dropna()
+    window = vol_window_from_interval(interval)
+    if resid.empty or window <= 1 or len(resid) < window:
+        return 1.0, float("nan"), float("nan")
+
+    rolling = resid.rolling(window).std().dropna()
+    if rolling.empty:
+        return 1.0, float("nan"), float("nan")
+
+    target_vol = float(rolling.median())
+    current_vol = float(rolling.iloc[-1])
+    if not np.isfinite(target_vol) or target_vol <= 0 or not np.isfinite(current_vol) or current_vol <= 0:
+        return 1.0, current_vol, target_vol
+
+    scale = target_vol / current_vol
+    scale = min(max(scale, VOL_TARGET_MIN_SCALE), VOL_TARGET_MAX_SCALE)
+    return scale, current_vol, target_vol
+
+
 def format_ratio(value: float) -> str:
     if not np.isfinite(value):
         return "n/a"
@@ -663,6 +697,7 @@ def build_pair_compare(
     obs_var: float,
     base_lot: float,
     base_side: str,
+    interval: str,
     gap_hours: float | None,
     gap_action: str,
     use_lcm_size: bool,
@@ -687,10 +722,14 @@ def build_pair_compare(
         if kf.empty:
             continue
         beta_series = kf["beta"]
-        resid_z = zscore(kf["resid"], None, "none")
+        resid = kf["resid"].dropna()
+        resid_z = zscore(resid, None, "none")
+
+        scale, _, _ = vol_target_scale(resid, interval)
+        base_lot_used = base_lot * scale
 
         last_beta = latest_value(beta_series)
-        beta_used = snap_beta_to_lot_steps(last_beta, base_lot, LOT_STEP) if use_lcm_size else last_beta
+        beta_used = snap_beta_to_lot_steps(last_beta, base_lot_used, LOT_STEP) if use_lcm_size else last_beta
         z_val = latest_value(resid_z)
         corr = float(pair[base].corr(pair[hedge])) if len(pair) >= 2 else float("nan")
         base_side_label = base_side_from_zscore(z_val)
@@ -702,7 +741,7 @@ def build_pair_compare(
             base_sign = 0.0
 
         base_last = latest_value(close[base]) if base in close.columns else float("nan")
-        base_units = float(base_lot) * contract_size(base)
+        base_units = float(base_lot_used) * contract_size(base)
         base_ccy, quote_ccy = split_pair(base)
         if np.isfinite(base_last):
             if quote_ccy == "USD":
@@ -740,7 +779,7 @@ def build_pair_compare(
                 "hedging_ratio": abs(beta_used) if np.isfinite(beta_used) else float("nan"),
                 "beta_used": beta_used,
                 "corr": corr,
-                "base_lot": base_lot,
+                "base_lot": base_lot_used,
                 "hedge_lot": hedge_lots,
                 "base_side": base_side_label,
                 "hedge_side": hedge_side_label,
@@ -869,6 +908,7 @@ def build_summary(
     obs_var: float,
     base_lot: float,
     base_side: str,
+    interval: str,
     gap_hours: float | None,
     gap_action: str,
     use_lcm_size: bool,
@@ -882,17 +922,7 @@ def build_summary(
     resid_map: Dict[str, pd.Series] = {}
 
     base_last = latest_value(close[base]) if base in close.columns else float("nan")
-    base_units = float(base_lot) * contract_size(base)
     base_ccy, quote_ccy = split_pair(base)
-    if np.isfinite(base_last):
-        if quote_ccy == "USD":
-            base_usd = base_last * base_units
-        elif base_ccy == "USD":
-            base_usd = base_units
-        else:
-            base_usd = base_last * base_units
-    else:
-        base_usd = float("nan")
     kalman_gap_action = "reset" if gap_action == "reset" else "none"
 
     for other in ret.columns:
@@ -915,11 +945,14 @@ def build_summary(
             continue
         beta_series = kf["beta"]
         beta_map[other] = beta_series
-        resid_z = zscore(kf["resid"], None, "none")
+        resid = kf["resid"].dropna()
+        resid_z = zscore(resid, None, "none")
         resid_map[other] = resid_z
 
+        scale, _, _ = vol_target_scale(resid, interval)
+        base_lot_used = base_lot * scale
         last_beta = latest_value(beta_series)
-        beta_used = snap_beta_to_lot_steps(last_beta, base_lot, LOT_STEP) if use_lcm_size else last_beta
+        beta_used = snap_beta_to_lot_steps(last_beta, base_lot_used, LOT_STEP) if use_lcm_size else last_beta
         last_z = latest_value(resid_z)
         base_side_label = base_side_from_zscore(last_z)
         if base_side_label == "SELL":
@@ -928,6 +961,16 @@ def build_summary(
             base_sign = 1.0
         else:
             base_sign = 0.0
+        base_units = float(base_lot_used) * contract_size(base)
+        if np.isfinite(base_last):
+            if quote_ccy == "USD":
+                base_usd = base_last * base_units
+            elif base_ccy == "USD":
+                base_usd = base_units
+            else:
+                base_usd = base_last * base_units
+        else:
+            base_usd = float("nan")
         base_usd_signed = base_usd * base_sign if np.isfinite(base_usd) else float("nan")
         corr = float(pair[base].corr(pair[other])) if len(pair) >= 2 else float("nan")
         hedge_last = latest_value(close[other]) if other in close.columns else float("nan")
@@ -946,7 +989,7 @@ def build_summary(
                 "beta_used": beta_used,
                 "corr": corr,
                 "resid_z": last_z,
-                "base_lot": base_lot,
+                "base_lot": base_lot_used,
                 "base_units": base_units,
                 "base_last": base_last,
                 "base_usd": base_usd,
@@ -972,6 +1015,7 @@ def render_tab(
     obs_var: float,
     base_lot: float,
     base_side: str,
+    interval: str,
     gap_hours: float | None,
     gap_action: str,
     use_lcm_size: bool,
@@ -998,6 +1042,7 @@ def render_tab(
         obs_var,
         base_lot,
         base_side,
+        interval,
         gap_hours,
         gap_action,
         use_lcm_size,
@@ -1234,7 +1279,7 @@ def main() -> None:
         )
         base_side = "AUTO"
         st.caption("Base side: auto (z-score > 0 = SELL, < 0 = BUY)")
-        use_lcm_size = False
+        use_lcm_size = True
         st.caption(
             f"1 standard lot = {FX_CONTRACT_MULTIPLIER:.0f} units | "
             "Base value = price * lot * contract units (if quote is USD)"
@@ -1305,6 +1350,7 @@ def main() -> None:
         obs_var,
         base_lot,
         base_side,
+        interval,
         gap_hours,
         gap_action,
         use_lcm_size,
@@ -1354,6 +1400,7 @@ def main() -> None:
                 obs_var,
                 base_lot,
                 base_side,
+                interval,
                 gap_hours,
                 gap_action,
                 use_lcm_size,
