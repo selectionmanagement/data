@@ -14,44 +14,18 @@ from tv import TradingViewClient, TradingViewError, resolution_from_interval
 from symbols import short_symbol
 
 PAIR_LIST = [
-    ("FOREXCOM:AUDUSD", "FOREXCOM:CADJPY"),
-    ("FOREXCOM:AUDUSD", "FOREXCOM:EURJPY"),
     ("FOREXCOM:AUDUSD", "FOREXCOM:EURUSD"),
-    ("FOREXCOM:AUDUSD", "FOREXCOM:GBPJPY"),
     ("FOREXCOM:AUDUSD", "FOREXCOM:GBPUSD"),
     ("FOREXCOM:AUDUSD", "FOREXCOM:NZDUSD"),
-    ("FOREXCOM:AUDUSD", "FOREXCOM:XAUUSD"),
     ("FOREXCOM:CADJPY", "FOREXCOM:EURJPY"),
-    ("FOREXCOM:CADJPY", "FOREXCOM:EURUSD"),
     ("FOREXCOM:CADJPY", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:CADJPY", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:CADJPY", "FOREXCOM:NZDUSD"),
-    ("FOREXCOM:CADJPY", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:EURJPY", "FOREXCOM:EURUSD"),
     ("FOREXCOM:EURJPY", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:EURJPY", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:EURJPY", "FOREXCOM:NZDUSD"),
     ("FOREXCOM:EURJPY", "FOREXCOM:USDJPY"),
-    ("FOREXCOM:EURJPY", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:EURUSD", "FOREXCOM:GBPJPY"),
     ("FOREXCOM:EURUSD", "FOREXCOM:GBPUSD"),
     ("FOREXCOM:EURUSD", "FOREXCOM:NZDUSD"),
-    ("FOREXCOM:EURUSD", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:GBPUSD", "FOREXCOM:GBPJPY"),
     ("FOREXCOM:GBPUSD", "FOREXCOM:NZDUSD"),
-    ("FOREXCOM:GBPUSD", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:NZDUSD", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:NZDUSD", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:USDCHF", "FOREXCOM:USDCAD"),
     ("FOREXCOM:USDJPY", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:USDJPY", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:CADJPY"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:EURJPY"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:USDJPY"),
     ("FOREXCOM:XAGUSD", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:XAUUSD", "FOREXCOM:GBPJPY"),
 ]
 BASE_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST]))
 FX_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST] + [hedge for _, hedge in PAIR_LIST]))
@@ -67,14 +41,14 @@ TIMEFRAME_OPTIONS = [
     "1d",
     "1w",
 ]
-DEFAULT_BARS = 252
+DEFAULT_BARS = 3600
 DEFAULT_BUFFER_BARS = 72
 DEFAULT_MIN_SEGMENT_BARS = 24
 DEFAULT_KALMAN_PROCESS_VAR = 1e-5
 DEFAULT_KALMAN_OBS_VAR = 1e-3
 FX_CONTRACT_MULTIPLIER = 100_000.0
 LOT_STEP = 0.01
-CACHE_TTL_SECONDS = 30 * 60
+CACHE_TTL_SECONDS = 60
 CONTRACT_SIZES = {
     "XAUUSD": 1.0,
     "XAGUSD": 50.0,
@@ -87,6 +61,7 @@ VOL_TARGET_WINDOWS = {
 }
 VOL_TARGET_MIN_SCALE = 0.5
 VOL_TARGET_MAX_SCALE = 1.5
+MEAN_SPREAD_BARS = 90
 
 PLOTLY_TEMPLATE = go.layout.Template(
     layout=go.Layout(
@@ -760,6 +735,7 @@ def build_pair_compare(
         beta_series = kf["beta"]
         resid = kf["resid"].dropna()
         resid_z = zscore(resid, None, "none")
+        mean_spread = float(resid.tail(MEAN_SPREAD_BARS).mean()) if not resid.empty else float("nan")
 
         scale, _, _ = vol_target_scale(resid, interval)
         base_lot_used = base_lot * scale
@@ -814,6 +790,7 @@ def build_pair_compare(
                 "z_score": z_val,
                 "hedging_ratio": abs(beta_used) if np.isfinite(beta_used) else float("nan"),
                 "beta_used": beta_used,
+                "mean_spread_90": mean_spread,
                 "corr": corr,
                 "base_lot": base_lot_used,
                 "hedge_lot": hedge_lots,
@@ -831,29 +808,41 @@ def build_pair_compare(
 
 
 def plot_pair_compare(df: pd.DataFrame) -> go.Figure:
+    plot_df = df.sort_values("mean_spread_90") if "mean_spread_90" in df.columns else df
     fig = go.Figure()
-    color_vals = df["hedging_ratio"].fillna(0.0)
-    custom = np.stack([df["corr"].fillna(0.0)], axis=-1)
+    color_vals = plot_df["mean_spread_90"].fillna(0.0)
+    color_array = color_vals.to_numpy(dtype=float)
+    finite_mask = np.isfinite(color_array)
+    max_abs = float(np.max(np.abs(color_array[finite_mask]))) if finite_mask.any() else 0.0
+    custom = np.stack(
+        [plot_df["corr"].fillna(0.0), plot_df["mean_spread_90"].fillna(float("nan"))],
+        axis=-1,
+    )
+    marker = dict(
+        size=14,
+        color=color_vals,
+        colorscale="RdBu",
+        showscale=True,
+        colorbar=dict(title=f"Mean Spread ({MEAN_SPREAD_BARS} bars)"),
+        line=dict(width=1, color="#1f2933"),
+    )
+    if np.isfinite(max_abs) and max_abs > 0:
+        marker["cmin"] = -max_abs
+        marker["cmax"] = max_abs
     fig.add_trace(
         go.Scatter(
-            x=df["z_score"],
-            y=df["hedging_ratio"],
+            x=plot_df["z_score"],
+            y=plot_df["hedging_ratio"],
             mode="markers+text",
-            text=df["pair"],
+            text=plot_df["pair"],
             textposition="top center",
-            marker=dict(
-                size=14,
-                color=color_vals,
-                colorscale="YlOrRd",
-                showscale=True,
-                colorbar=dict(title="Hedging Ratio"),
-                line=dict(width=1, color="#1f2933"),
-            ),
+            marker=marker,
             customdata=custom,
             hovertemplate=(
                 "Pair: %{text}<br>"
                 "Z-Score: %{x:.3f}<br>"
                 "Hedging Ratio: %{y:.3f}<br>"
+                f"Mean Spread ({MEAN_SPREAD_BARS}): %{{customdata[1]:.6f}}<br>"
                 "Corr: %{customdata[0]:.3f}<extra></extra>"
             ),
         )
@@ -1277,7 +1266,7 @@ def main() -> None:
             index=TIMEFRAME_OPTIONS.index(DEFAULT_INTERVAL) if DEFAULT_INTERVAL in TIMEFRAME_OPTIONS else 0,
         )
         bars = int(
-            st.number_input("Bars", min_value=100, max_value=2000, value=DEFAULT_BARS, step=10)
+            st.number_input("Bars", min_value=100, max_value=3600, value=DEFAULT_BARS, step=10)
         )
         buffer_bars = int(
             st.number_input(
