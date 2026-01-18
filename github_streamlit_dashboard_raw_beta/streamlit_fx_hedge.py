@@ -30,7 +30,7 @@ PAIR_LIST = [
 ]
 BASE_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST]))
 FX_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST] + [hedge for _, hedge in PAIR_LIST]))
-DEFAULT_INTERVAL = "1m"
+DEFAULT_INTERVAL = "1m","15m"
 DEFAULT_BARS = 7200
 DEFAULT_BUFFER_BARS = 72
 DEFAULT_MIN_SEGMENT_BARS = 24
@@ -1410,6 +1410,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
