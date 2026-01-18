@@ -1237,13 +1237,13 @@ def main() -> None:
         st.header("Data")
         interval = st.selectbox("Interval", [DEFAULT_INTERVAL], index=0)
         bars = int(
-            st.number_input("Bars", min_value=100, max_value=2000, value=DEFAULT_BARS, step=10)
+            st.number_input("Bars", min_value=100, max_value=7200, value=DEFAULT_BARS, step=10)
         )
         buffer_bars = int(
             st.number_input(
                 "Buffer bars (prefetch)",
                 min_value=0,
-                max_value=500,
+                max_value=7200,
                 value=DEFAULT_BUFFER_BARS,
                 step=12,
             )
@@ -1258,7 +1258,7 @@ def main() -> None:
             st.number_input(
                 "Min segment bars",
                 min_value=1,
-                max_value=200,
+                max_value=7200,
                 value=DEFAULT_MIN_SEGMENT_BARS,
                 step=1,
             )
@@ -1410,6 +1410,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
