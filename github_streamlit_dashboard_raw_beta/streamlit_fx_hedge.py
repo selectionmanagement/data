@@ -1272,7 +1272,7 @@ def main() -> None:
                 "Base lot size",
                 min_value=0.001,
                 max_value=100.0,
-                value=1.0,
+                value=0.3,
                 step=0.01,
                 format="%.3f",
             )
@@ -1410,3 +1410,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
