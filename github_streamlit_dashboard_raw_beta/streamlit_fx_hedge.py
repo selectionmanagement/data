@@ -14,24 +14,60 @@ from tv import TradingViewClient, TradingViewError, resolution_from_interval
 from symbols import short_symbol
 
 PAIR_LIST = [
-    ("FOREXCOM:EURJPY", "FOREXCOM:CADJPY"),
-    ("FOREXCOM:AUDJPY", "FOREXCOM:GBPJPY"),
-    ("FOREXCOM:GBPJPY", "FOREXCOM:AUDJPY"),
-    ("FOREXCOM:EURUSD", "FOREXCOM:USDCAD"),
-    ("FOREXCOM:GBPUSD", "FOREXCOM:USDCAD"),
-    ("FOREXCOM:XAGUSD", "FOREXCOM:XAUUSD"),
-    ("FOREXCOM:EURUSD", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:GBPJPY", "FOREXCOM:EURJPY"),
-    ("FOREXCOM:AUDUSD", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:NZDUSD", "FOREXCOM:EURUSD"),
-    ("FOREXCOM:NZDUSD", "FOREXCOM:GBPUSD"),
-    ("FOREXCOM:AUDUSD", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:CADJPY"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:EURJPY"),
     ("FOREXCOM:AUDUSD", "FOREXCOM:EURUSD"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:GBPUSD"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:AUDUSD", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:EURJPY"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:EURUSD"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:GBPUSD"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:CADJPY", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:EURUSD"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:GBPUSD"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:USDJPY"),
+    ("FOREXCOM:EURJPY", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:EURUSD", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:EURUSD", "FOREXCOM:GBPUSD"),
+    ("FOREXCOM:EURUSD", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:EURUSD", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:GBPUSD", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:GBPUSD", "FOREXCOM:NZDUSD"),
+    ("FOREXCOM:GBPUSD", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:NZDUSD", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:NZDUSD", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:USDCHF", "FOREXCOM:USDCAD"),
+    ("FOREXCOM:USDJPY", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:USDJPY", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:CADJPY"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:EURJPY"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:GBPJPY"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:GBPUSD"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:USDJPY"),
+    ("FOREXCOM:XAGUSD", "FOREXCOM:XAUUSD"),
+    ("FOREXCOM:XAUUSD", "FOREXCOM:GBPJPY"),
 ]
 BASE_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST]))
 FX_SYMBOLS = list(dict.fromkeys([base for base, _ in PAIR_LIST] + [hedge for _, hedge in PAIR_LIST]))
-DEFAULT_INTERVAL = "1m","15m"
-DEFAULT_BARS = 7200
+DEFAULT_INTERVAL = "1h"
+TIMEFRAME_OPTIONS = [
+    "1m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "2h",
+    "4h",
+    "1d",
+    "1w",
+]
+DEFAULT_BARS = 252
 DEFAULT_BUFFER_BARS = 72
 DEFAULT_MIN_SEGMENT_BARS = 24
 DEFAULT_KALMAN_PROCESS_VAR = 1e-5
@@ -1235,15 +1271,19 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Data")
-        interval = st.selectbox("Interval", [DEFAULT_INTERVAL], index=0)
+        interval = st.selectbox(
+            "Timeframe",
+            TIMEFRAME_OPTIONS,
+            index=TIMEFRAME_OPTIONS.index(DEFAULT_INTERVAL) if DEFAULT_INTERVAL in TIMEFRAME_OPTIONS else 0,
+        )
         bars = int(
-            st.number_input("Bars", min_value=100, max_value=7200, value=DEFAULT_BARS, step=10)
+            st.number_input("Bars", min_value=100, max_value=2000, value=DEFAULT_BARS, step=10)
         )
         buffer_bars = int(
             st.number_input(
                 "Buffer bars (prefetch)",
                 min_value=0,
-                max_value=7200,
+                max_value=500,
                 value=DEFAULT_BUFFER_BARS,
                 step=12,
             )
@@ -1258,7 +1298,7 @@ def main() -> None:
             st.number_input(
                 "Min segment bars",
                 min_value=1,
-                max_value=7200,
+                max_value=200,
                 value=DEFAULT_MIN_SEGMENT_BARS,
                 step=1,
             )
@@ -1272,14 +1312,14 @@ def main() -> None:
                 "Base lot size",
                 min_value=0.001,
                 max_value=100.0,
-                value=0.3,
+                value=1.0,
                 step=0.01,
                 format="%.3f",
             )
         )
         base_side = "AUTO"
         st.caption("Base side: auto (z-score > 0 = SELL, < 0 = BUY)")
-        use_lcm_size = True
+        use_lcm_size = False
         st.caption(
             f"1 standard lot = {FX_CONTRACT_MULTIPLIER:.0f} units | "
             "Base value = price * lot * contract units (if quote is USD)"
@@ -1410,8 +1450,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
